@@ -21,11 +21,12 @@ class CursorWrapper(object):
         self.db = db
         self.mydata = []
         self.error = False
+        self.rc = -1
 
     WRAP_ERROR_ATTRS = frozenset(['fetchone', 'fetchmany', 'fetchall', 'nextset'])
 
     def __getattr__(self, attr):
-        with open("/home/sjplatt/Attributes.txt","a") as f:
+        with open("/home/sjplatt/Results/Attributes.txt","a") as f:
             print(attr, "\n", file=f)
 
         cursor_attr = getattr(self.cursor, attr)
@@ -33,7 +34,7 @@ class CursorWrapper(object):
             wrapped = self.db.wrap_database_errors(cursor_attr)
             if attr == 'fetchone':
                 def test_fetchone():
-                    with open("/home/sjplatt/Wrapped.txt","a") as f:
+                    with open("/home/sjplatt/Results/Wrapped.txt","a") as f:
                         print("fetchone: ", self.mydata, "\n", file=f)
                     
                     if self.error:
@@ -48,7 +49,7 @@ class CursorWrapper(object):
                 return self.db.wrap_database_errors(test_fetchone)
             elif attr == 'fetchmany':
                 def test_fetchmany(size=self.cursor.arraysize):
-                    with open("/home/sjplatt/Wrapped.txt","a") as f:
+                    with open("/home/sjplatt/Results/Wrapped.txt","a") as f:
                         print("fetchmany: ", size, " ", self.mydata[:size], "\n", file=f)
                     if self.error:
                         raise psycopg2.ProgrammingError
@@ -59,7 +60,7 @@ class CursorWrapper(object):
                 return self.db.wrap_database_errors(test_fetchmany)
             elif attr == 'fetchall':
                 def test_fetchall():
-                    with open("/home/sjplatt/Wrapped.txt","a") as f:
+                    with open("/home/sjplatt/Results/Wrapped.txt","a") as f:
                         print("fetchall: ", self.mydata, "\n", file=f)
                     if self.error:
                         raise psycopg2.ProgrammingError
@@ -71,6 +72,11 @@ class CursorWrapper(object):
                 return wrapped
             return wrapped
         else:
+            if attr == 'rowcount':
+               cursor_attr = self.rc
+            if attr != 'close':
+                with open("/home/sjplatt/Results/Attributes.txt","a") as f:
+                    print(attr, " ", cursor_attr, "\n", file=f)
             return cursor_attr
 
     def __iter__(self):
@@ -103,31 +109,33 @@ class CursorWrapper(object):
 
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
-        with open("/home/sjplatt/Queries.txt", "a") as f:
+        with open("/home/sjplatt/Results/Queries.txt", "a") as f:
             print("Query: ", sql, "\n Params: ", params, "\n", file=f)
 
         with self.db.wrap_database_errors:
             if params is None:
                 ret = self.cursor.execute(sql)
+                self.rc = self.cursor.rowcount
                 try:
                     val = self.cursor.fetchall()
                     self.error = False
                 except:
                     val = []
                     self.error = True
-                with open("/home/sjplatt/Results.txt", "a") as f:
+                with open("/home/sjplatt/Results/Results.txt", "a") as f:
                     print("Result: ", val, "\n", file=f)
                 self.mydata = val
                 return ret
             else:
                 ret = self.cursor.execute(sql, params)
+                self.rc = self.cursor.rowcount
                 try:
                     val = self.cursor.fetchall()
                     self.error = False
                 except:
                     val = []
                     self.error = True
-                with open("/home/sjplatt/Results.txt","a") as f:
+                with open("/home/sjplatt/Results/Results.txt","a") as f:
                     print("Result: ",val, "\n", file=f)
                 self.mydata = val
                 return ret
@@ -143,7 +151,7 @@ class CursorWrapper(object):
             except:
                 val = []
                 self.error = True
-            with open("/home/sjplatt/Results.txt", "a") as f:
+            with open("/home/sjplatt/Results/Results.txt", "a") as f:
                 print("Result many: ",val, "\n", file=f)
             self.mydata = val
             return ret
