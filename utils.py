@@ -6,6 +6,8 @@ import psycopg2
 import hashlib
 import logging
 import copy
+import json
+import redis
 from time import time
 
 from django.conf import settings
@@ -22,21 +24,17 @@ class CursorWrapper(object):
         self.mydata = []
         self.error = False
         self.rc = -1
+        self.cache = redis.StrictRedis(host='localhost', port=6379, db=0)
+        #self.cache.flushall()
 
     WRAP_ERROR_ATTRS = frozenset(['fetchone', 'fetchmany', 'fetchall', 'nextset'])
 
     def __getattr__(self, attr):
-        with open("/home/sjplatt/Results/Attributes.txt","a") as f:
-            print(attr, "\n", file=f)
-
         cursor_attr = getattr(self.cursor, attr)
         if attr in CursorWrapper.WRAP_ERROR_ATTRS:
             wrapped = self.db.wrap_database_errors(cursor_attr)
             if attr == 'fetchone':
                 def test_fetchone():
-                    with open("/home/sjplatt/Results/Wrapped.txt","a") as f:
-                        print("fetchone: ", self.mydata, "\n", file=f)
-                    
                     if self.error:
                         raise psycopg2.ProgrammingError
 
@@ -49,8 +47,6 @@ class CursorWrapper(object):
                 return self.db.wrap_database_errors(test_fetchone)
             elif attr == 'fetchmany':
                 def test_fetchmany(size=self.cursor.arraysize):
-                    with open("/home/sjplatt/Results/Wrapped.txt","a") as f:
-                        print("fetchmany: ", size, " ", self.mydata[:size], "\n", file=f)
                     if self.error:
                         raise psycopg2.ProgrammingError
 
@@ -60,8 +56,6 @@ class CursorWrapper(object):
                 return self.db.wrap_database_errors(test_fetchmany)
             elif attr == 'fetchall':
                 def test_fetchall():
-                    with open("/home/sjplatt/Results/Wrapped.txt","a") as f:
-                        print("fetchall: ", self.mydata, "\n", file=f)
                     if self.error:
                         raise psycopg2.ProgrammingError
                     res = copy.deepcopy(self.mydata)
@@ -74,9 +68,6 @@ class CursorWrapper(object):
         else:
             if attr == 'rowcount':
                cursor_attr = self.rc
-            if attr != 'close':
-                with open("/home/sjplatt/Results/Attributes.txt","a") as f:
-                    print(attr, " ", cursor_attr, "\n", file=f)
             return cursor_attr
 
     def __iter__(self):
@@ -107,38 +98,103 @@ class CursorWrapper(object):
             else:
                 return self.cursor.callproc(procname, params)
 
+    # Returns True if data contains a datetime and false otherwise
+    def containsDateTime(self, data):
+        return "datetime.datetime" in str(data)
+
+    def lookupCache(self, sql, params):
+        if params is None:
+            value = self.cache.get(str(sql))
+            if value:
+                with open("/home/sjplatt/Results/Cache.txt","a") as f:
+                    print("Hit: ", str(sql) +"\n", file=f)
+                
+                values = json.loads(value)
+                self.mydata = values[0]
+                self.rc = values[1]
+
+                if values[2] == "False":
+                    self.error = False
+                else:
+                    self.error = True
+                return True
+            else:
+                with open("/home/sjplatt/Results/Cache.txt","a") as f:
+                    print("Miss: ", str(sql) + "\n", file=f)
+                return False
+        else:
+            value = self.cache.get(str(sql) + "|" + str(params))
+            if value:
+                with open("/home/sjplatt/Results/Cache.txt","a") as f:
+                    print("Hit: ", str(sql) + "|" + str(params) + "\n", file=f)
+                
+                values = json.loads(value)
+                self.mydata = values[0]
+                self.rc = values[1]
+                
+                if values[2] == "False":
+                    self.error = False
+                else:
+                    self.error = True
+                return True
+            else:
+                with open("/home/sjplatt/Results/Cache.txt","a") as f:
+                    print("Miss: ", str(sql) + "|" + str(params) + "\n", file=f)
+                return False
+    
+    def putInCache(self, sql, params, data, rc, error):
+        if self.containsDateTime(data) or not "SELECT" in str(sql):
+            return
+
+        if params is None:
+            key = str(sql)
+            self.cache.set(key, json.dumps([data, rc, str(error)]))
+        else:
+            key = str(sql) + "|" + str(params)
+            self.cache.set(key, json.dumps([data, rc, str(error)]))
+
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
-        with open("/home/sjplatt/Results/Queries.txt", "a") as f:
-            print("Query: ", sql, "\n Params: ", params, "\n", file=f)
 
         with self.db.wrap_database_errors:
             if params is None:
-                ret = self.cursor.execute(sql)
-                self.rc = self.cursor.rowcount
-                try:
-                    val = self.cursor.fetchall()
-                    self.error = False
-                except:
-                    val = []
-                    self.error = True
-                with open("/home/sjplatt/Results/Results.txt", "a") as f:
-                    print("Result: ", val, "\n", file=f)
-                self.mydata = val
-                return ret
+                # If the element is in the cache return None
+                if self.lookupCache(sql,params):
+                    return None
+                else:
+                    ret = self.cursor.execute(sql)
+                    self.rc = self.cursor.rowcount
+                    try:
+                        val = self.cursor.fetchall()
+                        self.error = False
+                    except:
+                        val = []
+                        self.error = True
+                    self.mydata = val
+
+                    # Only add to the cache if ret is not null
+                    if ret == None:
+                        self.putInCache(sql, params, self.mydata, self.rc, self.error)
+                    return ret
             else:
-                ret = self.cursor.execute(sql, params)
-                self.rc = self.cursor.rowcount
-                try:
-                    val = self.cursor.fetchall()
-                    self.error = False
-                except:
-                    val = []
-                    self.error = True
-                with open("/home/sjplatt/Results/Results.txt","a") as f:
-                    print("Result: ",val, "\n", file=f)
-                self.mydata = val
-                return ret
+                # If the element is in the cache return None
+                if self.lookupCache(sql,params):
+                    return None
+                else:
+                    ret = self.cursor.execute(sql, params)
+                    self.rc = self.cursor.rowcount
+                    try:
+                        val = self.cursor.fetchall()
+                        self.error = False
+                    except:
+                        val = []
+                        self.error = True
+                    self.mydata = val
+                
+                    # Only add to the cache if ret is not null
+                    if ret == None:
+                        self.putInCache(sql, params, self.mydata, self.rc, self.error)
+                    return ret
 
 
     def executemany(self, sql, param_list):
@@ -151,8 +207,6 @@ class CursorWrapper(object):
             except:
                 val = []
                 self.error = True
-            with open("/home/sjplatt/Results/Results.txt", "a") as f:
-                print("Result many: ",val, "\n", file=f)
             self.mydata = val
             return ret
 
