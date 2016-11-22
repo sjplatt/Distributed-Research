@@ -1,6 +1,7 @@
 import copy
 import time
 import warnings
+import time
 from collections import deque
 from contextlib import contextmanager
 
@@ -21,7 +22,7 @@ except ImportError:
     pytz = None
 
 NO_DB_ALIAS = '__no_db__'
-
+temp_conn = None
 
 class BaseDatabaseWrapper(object):
     """
@@ -36,7 +37,6 @@ class BaseDatabaseWrapper(object):
     ops = None
     vendor = 'unknown'
     SchemaEditorClass = None
-
     queries_limit = 9000
 
     def __init__(self, settings_dict, alias=DEFAULT_DB_ALIAS,
@@ -156,6 +156,8 @@ class BaseDatabaseWrapper(object):
     def connect(self):
         """Connects to the database. Assumes that the connection is closed."""
         # Check for invalid configurations.
+        global temp_conn
+        start_time = time.time()
         self.check_settings()
         # In case the previous connection was closed while in an atomic block
         self.in_atomic_block = False
@@ -168,12 +170,19 @@ class BaseDatabaseWrapper(object):
         self.errors_occurred = False
         # Establish the connection
         conn_params = self.get_connection_params()
-        self.connection = self.get_new_connection(conn_params)
+        if not temp_conn:
+            print("BAD RESULT")
+            self.connection = self.get_new_connection(conn_params)
+        else:
+            print("GOOD RESULT")
+            self.connection = temp_conn
+        temp_conn = self.connection
         self.set_autocommit(self.settings_dict['AUTOCOMMIT'])
         self.init_connection_state()
         connection_created.send(sender=self.__class__, connection=self)
 
         self.run_on_commit = []
+        #print(time.time()-start_time)
 
     def check_settings(self):
         if self.settings_dict['TIME_ZONE'] is not None:
@@ -216,6 +225,8 @@ class BaseDatabaseWrapper(object):
                 return self.connection.rollback()
 
     def _close(self):
+        print("CLOSE CONNECTION")
+        return
         if self.connection is not None:
             with self.wrap_database_errors:
                 return self.connection.close()

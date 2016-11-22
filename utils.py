@@ -8,7 +8,12 @@ import logging
 import copy
 import json
 import redis
+import time as t
 from time import time
+import requests
+import netifaces as ni
+import dateutil.parser
+ni.ifaddresses('eth0')
 
 from django.conf import settings
 from django.utils.encoding import force_bytes
@@ -16,6 +21,22 @@ from django.utils.timezone import utc
 
 logger = logging.getLogger('django.db.backends')
 
+
+def customSerializeDatetime(obj):
+    if isinstance(obj, datetime.datetime):
+        return "datetime:" + obj.isoformat()
+    raise TypeError("Type not serializable Boo")
+
+def customDeserializeDatetime(obj):
+    if isinstance(obj, list):
+        return [customDeserializeDatetime(d) for d in obj]
+    try:
+        if "datetime" in str(obj):
+            return dateutil.parser.parse(obj.split(":")[1])
+        else:
+            return obj
+    except:
+        return obj
 
 class CursorWrapper(object):
     def __init__(self, cursor, db):
@@ -98,19 +119,32 @@ class CursorWrapper(object):
             else:
                 return self.cursor.callproc(procname, params)
 
+    # Returns the datetime parameter from params
+    def removeDateTime(self, params):
+        if params is None:
+            return None
+        else:
+            res = []
+            for temp in params:
+                if not isinstance(temp, datetime.datetime):
+                    res += [temp]
+
+            return tuple(res)
+    
     # Returns True if data contains a datetime and false otherwise
     def containsDateTime(self, data):
         return "datetime.datetime" in str(data)
 
     def lookupCache(self, sql, params):
+        params = self.removeDateTime(params)
         if params is None:
             value = self.cache.get(str(sql))
             if value:
-                with open("/home/sjplatt/Results/Cache.txt","a") as f:
-                    print("Hit: ", str(sql) +"\n", file=f)
+                # with open("/home/samuel/Results/Cache.txt","a") as f:
+                #     print("Hit: ", str(sql) +"\n", file=f)
                 
                 values = json.loads(value)
-                self.mydata = values[0]
+                self.mydata = [customDeserializeDatetime(v) for v in values[0]]
                 self.rc = values[1]
 
                 if values[2] == "False":
@@ -119,17 +153,17 @@ class CursorWrapper(object):
                     self.error = True
                 return True
             else:
-                with open("/home/sjplatt/Results/Cache.txt","a") as f:
-                    print("Miss: ", str(sql) + "\n", file=f)
+                # with open("/home/samuel/Results/Cache.txt","a") as f:
+                #     print("Miss: ", str(sql) + "\n", file=f)
                 return False
         else:
             value = self.cache.get(str(sql) + "|" + str(params))
             if value:
-                with open("/home/sjplatt/Results/Cache.txt","a") as f:
-                    print("Hit: ", str(sql) + "|" + str(params) + "\n", file=f)
+                # with open("/home/samuel/Results/Cache.txt","a") as f:
+                #     print("Hit: ", str(sql) + "|" + str(params) + "\n", file=f)
                 
                 values = json.loads(value)
-                self.mydata = values[0]
+                self.mydata = [customDeserializeDatetime(v) for v in values[0]]
                 self.rc = values[1]
                 
                 if values[2] == "False":
@@ -138,20 +172,34 @@ class CursorWrapper(object):
                     self.error = True
                 return True
             else:
-                with open("/home/sjplatt/Results/Cache.txt","a") as f:
-                    print("Miss: ", str(sql) + "|" + str(params) + "\n", file=f)
+                # with open("/home/samuel/Results/Cache.txt","a") as f:
+                #     print("Miss: ", str(sql) + "|" + str(params) + "\n", file=f)
                 return False
     
     def putInCache(self, sql, params, data, rc, error):
-        if self.containsDateTime(data) or not "SELECT" in str(sql):
+        params = self.removeDateTime(params)
+        
+        if not "SELECT" in str(sql):
             return
 
         if params is None:
             key = str(sql)
-            self.cache.set(key, json.dumps([data, rc, str(error)]))
+            self.cache.set(key, json.dumps([data, rc, str(error)], default=customSerializeDatetime))
         else:
             key = str(sql) + "|" + str(params)
-            self.cache.set(key, json.dumps([data, rc, str(error)]))
+            self.cache.set(key, json.dumps([data, rc, str(error)], default=customSerializeDatetime))
+
+    def sendQueryToCloud(self, sql, params):
+        params = json.dumps(params, default=customSerializeDatetime)
+        key = str(sql) + "|" + params
+        ip = ni.ifaddresses('eth0')[2][0]['addr']
+        # Send the request to the cloud and get the response
+        r = requests.post("http://54.213.170.131:8000/polls/", data=key, headers={"source":ip})
+        ret, data, rc, error = json.loads(r.text)
+        
+        data = [customDeserializeDatetime(d) for d in data]
+        #print(ret, data,rc,error)
+        return ret, data, rc, error
 
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
@@ -160,17 +208,24 @@ class CursorWrapper(object):
             if params is None:
                 # If the element is in the cache return None
                 if self.lookupCache(sql,params):
+                    print("HIT")
                     return None
                 else:
-                    ret = self.cursor.execute(sql)
-                    self.rc = self.cursor.rowcount
-                    try:
-                        val = self.cursor.fetchall()
-                        self.error = False
-                    except:
-                        val = []
-                        self.error = True
+                    print("MISS")
+                    temp_time = t.time()
+                    ret, val, rc, error = self.sendQueryToCloud(sql,None)
+                    #ret = self.cursor.execute(sql)
+                    print(t.time()-temp_time)
+                    self.rc = rc
+                    self.error = error
                     self.mydata = val
+                    # try:
+                    #     val = self.cursor.fetchall()
+                    #     self.error = False
+                    # except:
+                    #     val = []
+                    #     self.error = True
+                    # self.mydata = val
 
                     # Only add to the cache if ret is not null
                     if ret == None:
@@ -179,23 +234,30 @@ class CursorWrapper(object):
             else:
                 # If the element is in the cache return None
                 if self.lookupCache(sql,params):
+                    print("HIT")
                     return None
                 else:
-                    ret = self.cursor.execute(sql, params)
-                    self.rc = self.cursor.rowcount
-                    try:
-                        val = self.cursor.fetchall()
-                        self.error = False
-                    except:
-                        val = []
-                        self.error = True
+                    print("MISS")
+                    temp_time = t.time()
+                    #ret = self.cursor.execute(sql, params)
+                    ret, val, rc, error = self.sendQueryToCloud(sql,params)
+                    print(t.time()-temp_time)
+                    self.rc = rc
+                    self.error = error
                     self.mydata = val
+                    # self.rc = self.cursor.rowcount
+                    # try:
+                    #     val = self.cursor.fetchall()
+                    #     self.error = False
+                    # except:
+                    #     val = []
+                    #     self.error = True
+                    # self.mydata = val
                 
                     # Only add to the cache if ret is not null
                     if ret == None:
                         self.putInCache(sql, params, self.mydata, self.rc, self.error)
                     return ret
-
 
     def executemany(self, sql, param_list):
         self.db.validate_no_broken_transaction()
