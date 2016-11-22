@@ -178,7 +178,7 @@ class CursorWrapper(object):
     
     def putInCache(self, sql, params, data, rc, error):
         params = self.removeDateTime(params)
-        
+
         if not "SELECT" in str(sql):
             return
 
@@ -203,19 +203,19 @@ class CursorWrapper(object):
 
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
-
+        
         with self.db.wrap_database_errors:
             if params is None:
                 # If the element is in the cache return None
                 if self.lookupCache(sql,params):
-                    print("HIT")
+                    #print("HIT")
                     return None
                 else:
                     print("MISS")
-                    temp_time = t.time()
+                    #temp_time = t.time()
                     ret, val, rc, error = self.sendQueryToCloud(sql,None)
                     #ret = self.cursor.execute(sql)
-                    print(t.time()-temp_time)
+                    #print(t.time()-temp_time)
                     self.rc = rc
                     self.error = error
                     self.mydata = val
@@ -234,14 +234,14 @@ class CursorWrapper(object):
             else:
                 # If the element is in the cache return None
                 if self.lookupCache(sql,params):
-                    print("HIT")
+                    #print("HIT")
                     return None
                 else:
                     print("MISS")
-                    temp_time = t.time()
+                    #temp_time = t.time()
                     #ret = self.cursor.execute(sql, params)
                     ret, val, rc, error = self.sendQueryToCloud(sql,params)
-                    print(t.time()-temp_time)
+                    #print(t.time()-temp_time)
                     self.rc = rc
                     self.error = error
                     self.mydata = val

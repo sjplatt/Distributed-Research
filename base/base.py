@@ -171,10 +171,10 @@ class BaseDatabaseWrapper(object):
         # Establish the connection
         conn_params = self.get_connection_params()
         if not temp_conn:
-            print("BAD RESULT")
+            #print("BAD RESULT")
             self.connection = self.get_new_connection(conn_params)
         else:
-            print("GOOD RESULT")
+            #print("GOOD RESULT")
             self.connection = temp_conn
         temp_conn = self.connection
         self.set_autocommit(self.settings_dict['AUTOCOMMIT'])
@@ -225,7 +225,7 @@ class BaseDatabaseWrapper(object):
                 return self.connection.rollback()
 
     def _close(self):
-        print("CLOSE CONNECTION")
+        #print("CLOSE CONNECTION")
         return
         if self.connection is not None:
             with self.wrap_database_errors:
