@@ -203,61 +203,23 @@ class CursorWrapper(object):
 
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
-        #self.cache.flushall()
-        with self.db.wrap_database_errors:
-            if params is None:
-                # If the element is in the cache return None
-                if self.lookupCache(sql,params):
-                    #print("HIT")
-                    return None
-                else:
-                    print("MISS")
-                    #temp_time = t.time()
-                    ret, val, rc, error = self.sendQueryToCloud(sql,None)
-                    #ret = self.cursor.execute(sql)
-                    #print(t.time()-temp_time)
-                    self.rc = rc
-                    self.error = error
-                    self.mydata = val
-                    # try:
-                    #     val = self.cursor.fetchall()
-                    #     self.error = False
-                    # except:
-                    #     val = []
-                    #     self.error = True
-                    # self.mydata = val
 
-                    # Only add to the cache if ret is not null
-                    if ret == None:
-                        self.putInCache(sql, params, self.mydata, self.rc, self.error)
-                    return ret
-            else:
-                # If the element is in the cache return None
-                if self.lookupCache(sql,params):
-                    #print("HIT")
-                    return None
-                else:
-                    print("MISS")
-                    #temp_time = t.time()
-                    #ret = self.cursor.execute(sql, params)
-                    ret, val, rc, error = self.sendQueryToCloud(sql,params)
-                    #print(t.time()-temp_time)
-                    self.rc = rc
-                    self.error = error
-                    self.mydata = val
-                    # self.rc = self.cursor.rowcount
-                    # try:
-                    #     val = self.cursor.fetchall()
-                    #     self.error = False
-                    # except:
-                    #     val = []
-                    #     self.error = True
-                    # self.mydata = val
-                
-                    # Only add to the cache if ret is not null
-                    if ret == None:
-                        self.putInCache(sql, params, self.mydata, self.rc, self.error)
-                    return ret
+        with self.db.wrap_database_errors:
+            key = str(sql)
+            if not params is None:
+                params = json.dumps(params, default=customSerializeDatetime)
+                key = str(sql) + "|" + params
+
+            r = requests.post("http://localhost:5555/proxy/getCache/", data=key)
+
+            ret, data, rc, error = json.loads(r.text)
+            data = [customDeserializeDatetime(d) for d in data]
+
+            self.mydata = data
+            self.rc = rc
+            self.error = error
+            
+            return ret 
 
     def executemany(self, sql, param_list):
         self.db.validate_no_broken_transaction()
@@ -271,7 +233,6 @@ class CursorWrapper(object):
                 self.error = True
             self.mydata = val
             return ret
-
 
 class CursorDebugWrapper(CursorWrapper):
 
