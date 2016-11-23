@@ -203,7 +203,7 @@ class CursorWrapper(object):
 
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
-        
+        #self.cache.flushall()
         with self.db.wrap_database_errors:
             if params is None:
                 # If the element is in the cache return None
