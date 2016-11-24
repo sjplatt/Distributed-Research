@@ -137,44 +137,24 @@ class CursorWrapper(object):
 
     def lookupCache(self, sql, params):
         params = self.removeDateTime(params)
-        if params is None:
-            value = self.cache.get(str(sql))
-            if value:
-                # with open("/home/samuel/Results/Cache.txt","a") as f:
-                #     print("Hit: ", str(sql) +"\n", file=f)
-                
-                values = json.loads(value)
-                self.mydata = [customDeserializeDatetime(v) for v in values[0]]
-                self.rc = values[1]
+        
+        key = str(sql)
+        if not params is None:
+            key = str(sql) + "|" + str(params)
 
-                if values[2] == "False":
-                    self.error = False
-                else:
-                    self.error = True
-                return True
+        value = self.cache.get(key)
+        if value:
+            values = json.loads(value)
+            self.mydata = [customDeserializeDatetime(v) for v in values[0]]
+            self.rc = values[1]
+
+            if values[2] == "False":
+                self.error = False
             else:
-                # with open("/home/samuel/Results/Cache.txt","a") as f:
-                #     print("Miss: ", str(sql) + "\n", file=f)
-                return False
+                self.error = True
+            return True
         else:
-            value = self.cache.get(str(sql) + "|" + str(params))
-            if value:
-                # with open("/home/samuel/Results/Cache.txt","a") as f:
-                #     print("Hit: ", str(sql) + "|" + str(params) + "\n", file=f)
-                
-                values = json.loads(value)
-                self.mydata = [customDeserializeDatetime(v) for v in values[0]]
-                self.rc = values[1]
-                
-                if values[2] == "False":
-                    self.error = False
-                else:
-                    self.error = True
-                return True
-            else:
-                # with open("/home/samuel/Results/Cache.txt","a") as f:
-                #     print("Miss: ", str(sql) + "|" + str(params) + "\n", file=f)
-                return False
+            return False
     
     def putInCache(self, sql, params, data, rc, error):
         params = self.removeDateTime(params)
@@ -202,6 +182,26 @@ class CursorWrapper(object):
         return ret, data, rc, error
 
     def execute(self, sql, params=None):
+        self.db.validate_no_broken_transaction()
+        #self.cache.flushall()
+        with self.db.wrap_database_errors:
+            # If the element is in the cache return None
+            if self.lookupCache(sql,params):
+                #print("HIT")
+                return None
+            else:
+                print("MISS")
+                ret, val, rc, error = self.sendQueryToCloud(sql,params)
+                self.rc = rc
+                self.error = error
+                self.mydata = val
+
+                # Only add to the cache if ret is not null
+                if ret == None:
+                    self.putInCache(sql, params, self.mydata, self.rc, self.error)
+                return ret
+   
+    def executeRollback(self, sql, params=None):
         self.db.validate_no_broken_transaction()
 
         with self.db.wrap_database_errors:
