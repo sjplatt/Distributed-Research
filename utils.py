@@ -9,6 +9,7 @@ import copy
 import json
 import redis
 import time as t
+import random
 from time import time
 import requests
 import netifaces as ni
@@ -20,7 +21,8 @@ from django.utils.encoding import force_bytes
 from django.utils.timezone import utc
 
 logger = logging.getLogger('django.db.backends')
-
+number = 0
+total = 0
 
 def customSerializeDatetime(obj):
     if isinstance(obj, datetime.datetime):
@@ -184,13 +186,21 @@ class CursorWrapper(object):
     def execute(self, sql, params=None):
         self.db.validate_no_broken_transaction()
         #self.cache.flushall()
+        global total
+        global number
+        total+=1
+        if total % 250 == 0:
+            print(float(number)/float(total)*16.0)
         with self.db.wrap_database_errors:
             # If the element is in the cache return None
-            if self.lookupCache(sql,params):
-                #print("HIT")
+            randNum = float(random.randint(0,100))
+            upperBound = 68.75
+            if self.lookupCache(sql,params) and randNum < upperBound:
+                # print("HIT")
                 return None
             else:
-                print("MISS")
+                #print("MISS")
+                number+=1
                 ret, val, rc, error = self.sendQueryToCloud(sql,params)
                 self.rc = rc
                 self.error = error
